@@ -1,172 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8" />
-  <title>Posture Detector (Browser Only)</title>
+    <meta charset="UTF-8" />
+    <title>Posture Lantern — Minimal UI</title>
 
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <!-- CSS -->
+    <link rel="stylesheet" href="style.css">
 
-  <style>
-    body { 
-      font-family: sans-serif; 
-      text-align: center; 
-      background: #222; 
-      color: white;
-      transition: background-color 0.8s ease;
-    }
-    video {
-      border-radius: 8px;
-      width: 600px;
-      margin-bottom: 20px;
-      background: black;
-    }
-    #statusBox {
-      font-size: 32px;
-      padding: 10px 20px;
-      border-radius: 8px;
-      display: inline-block;
-      background: #555;
-      transition: background-color 0.5s ease, color 0.5s ease;
-    }
-    #toggleBtn {
-      padding: 10px 20px;
-      font-size: 18px;
-      margin-bottom: 20px;
-      border-radius: 8px;
-      border: none;
-      cursor: pointer;
-    }
-  </style>
+    <!-- p5.js + ml5.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+    <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
+
+    <!-- MQTT.js -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 </head>
+
 <body>
 
-  <h1>Posture Detector</h1>
+    <h1>Posture Lantern</h1>
 
-  <!-- SESSION BUTTON -->
-  <button id="toggleBtn" style="background:#3498db; color:white;">Start Session</button>
+    <div class="container">
 
-  <br><br>
+        <!-- CONNECTION PANEL -->
+        <div class="panel">
+            <h2>Connection</h2>
+            <div>
+                <span class="status-light" id="mqttLight" style="background:#c33;"></span>
+                <b>MQTT:</b> <span id="mqttStatus">Disconnected</span>
+            </div>
+            <br>
+            <div><b>Device:</b> <span id="deviceIP">None</span></div>
 
-  <video id="video" playsinline></video>
+            <button id="connectMQTT">Connect</button>
+            <button id="pingDevice">Ping Device</button>
+        </div>
 
-  <div id="statusBox">Idle</div>
+        <!-- POSTURE PANEL -->
+        <div class="panel">
+            <h2>Posture</h2>
+            <div id="postureBox" class="good">Waiting for data...</div>
 
-  <script>
-    let detector;
-    let detecting = false;
-    let detectionLoop = null;
-    let stream = null;
+            <br>
+            <div><b>Nose Y:</b> <span id="noseVal">—</span></div>
+            <div><b>Shoulder Y:</b> <span id="shoulderVal">—</span></div>
+            <div><b>Delta:</b> <span id="deltaVal">—</span></div>
+        </div>
 
-    const video = document.getElementById("video");
-    const statusBox = document.getElementById("statusBox");
-    const toggleBtn = document.getElementById("toggleBtn");
+    </div>
 
-    async function startCamera() {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 }
-      });
+    <div id="videoContainer"></div>
 
-      video.srcObject = stream;
+    <!-- MAIN JS -->
+    <script src="script.js"></script>
 
-      // Force playback or video will stay black
-      await video.play();
-
-      return video;
-    }
-
-    function stopCamera() {
-      if (!stream) return;
-      const tracks = stream.getTracks();
-      tracks.forEach(t => t.stop());
-      stream = null;
-      video.srcObject = null;
-    }
-
-    function classifyPosture(keypoints) {
-      const nose = keypoints.find(k => k.name === "nose");
-      const leftShoulder = keypoints.find(k => k.name === "left_shoulder");
-      const rightShoulder = keypoints.find(k => k.name === "right_shoulder");
-
-      if (!nose || !leftShoulder || !rightShoulder) return "I";
-
-      const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
-      const shoulderX = (leftShoulder.x + rightShoulder.x) / 2;
-
-      const verticalSlouch = nose.y > shoulderY + 15;
-      const forwardDistance = Math.abs(nose.x - shoulderX);
-      const forwardSlouch = forwardDistance > 18;
-
-      if (verticalSlouch || forwardSlouch) return "S";
-      return "U";
-    }
-
-    async function runDetector() {
-      if (!detecting) return;
-
-      const poses = await detector.estimatePoses(video);
-
-      if (poses.length > 0) {
-        const kp = poses[0].keypoints;
-        const posture = classifyPosture(kp);
-
-        if (posture === "U") {
-          statusBox.innerText = "Upright";
-          statusBox.style.background = "#2ecc71";
-          document.body.style.backgroundColor = "#d6f5d6";
-          statusBox.style.color = "#000";
-        } 
-        else if (posture === "S") {
-          statusBox.innerText = "Slouching";
-          statusBox.style.background = "#bb86fc";
-          document.body.style.backgroundColor = "#e8d6ff";
-          statusBox.style.color = "#000";
-        } 
-        else {
-          statusBox.innerText = "Idle";
-          statusBox.style.background = "#7f8c8d";
-          document.body.style.backgroundColor = "#eeeeee";
-          statusBox.style.color = "#000";
-        }
-      }
-
-      detectionLoop = requestAnimationFrame(runDetector);
-    }
-
-    toggleBtn.onclick = async () => {
-      detecting = !detecting;
-
-      if (detecting) {
-        toggleBtn.innerText = "Stop Session";
-        toggleBtn.style.background = "#e74c3c";
-
-        statusBox.innerText = "Starting camera...";
-        await startCamera();
-
-        statusBox.innerText = "Detecting...";
-
-        if (!detector) {
-          detector = await poseDetection.createDetector(
-            poseDetection.SupportedModels.MoveNet,
-            {
-              modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-            }
-          );
-        }
-
-        runDetector();
-      } 
-      else {
-        toggleBtn.innerText = "Start Session";
-        toggleBtn.style.background = "#3498db";
-
-        statusBox.innerText = "Idle";
-        cancelAnimationFrame(detectionLoop);
-        stopCamera();
-      }
-    };
-
-  </script>
 </body>
+
 </html>
